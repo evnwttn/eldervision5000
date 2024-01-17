@@ -1,70 +1,101 @@
-use audrey::read::Reader;
+use hound;
 use nannou::prelude::*;
-use spectrum_analyzer::scaling::divide_by_N_sqrt;
-use spectrum_analyzer::windows::hann_window;
-use spectrum_analyzer::{samples_fft_to_spectrum, FrequencyLimit};
-use std::fs::File;
+use rustfft::{num_complex::Complex, FftPlanner};
 use std::path::Path;
 
-struct Model {}
+struct FrequencyAmplitude {
+    frequency: f32,
+    amplitude: f32,
+}
+
+struct Model {
+    spectrum: Vec<FrequencyAmplitude>,
+}
 
 fn main() {
     nannou::app(model).event(event).simple_window(view).run();
 }
 
 fn model(_app: &App) -> Model {
-    let path = Path::new("src/audio/Alien Space Bats.wav");
-    let file = File::open(path).expect("Failed to open file");
+    let path = Path::new("src/audio/SampleAudio.wav");
+    let mut reader = hound::WavReader::open(path).expect("Failed to open file");
+    let spec = reader.spec();
 
-    let mut reader = Reader::new(file).expect("Failed to create reader");
-    let desc = reader.description();
-    println!("Audio format: {:?}", desc.format());
+    let samples: Vec<i32> = reader.samples().map(|s| s.unwrap()).collect();
 
-    let samples: Vec<f32> = reader
-        .samples::<f32>()
-        .take(2048) // Taking 2048 samples; adjust as needed
-        .map(|s| s.expect("Error reading sample"))
+    let mut buffer: Vec<Complex<f32>> = samples
+        .into_iter()
+        .map(|x| Complex {
+            re: x as f32,
+            im: 0.0,
+        })
         .collect();
 
-    let hann_window = hann_window(&samples);
+    let mut planner = FftPlanner::new();
+    let fft = planner.plan_fft_forward(buffer.len());
+    fft.process(&mut buffer);
 
-    let spectrum_hann_window = samples_fft_to_spectrum(
-        &hann_window,
-        44100,
-        FrequencyLimit::Range(20.0, 20000.0),
-        Some(&divide_by_N_sqrt),
-    )
-    .unwrap();
+    let fa_data: Vec<FrequencyAmplitude> = buffer
+        .iter()
+        .enumerate()
+        .map(|(i, &complex_val)| {
+            let amplitude = (complex_val.re.powi(2) + complex_val.im.powi(2)).sqrt();
+            let frequency = i as f32 * spec.sample_rate as f32 / buffer.len() as f32;
 
-    for (fr, fr_val) in spectrum_hann_window.data().iter() {
-        println!("{}Hz => {}", fr, fr_val)
-    }
+            FrequencyAmplitude {
+                frequency,
+                amplitude,
+            }
+        })
+        .filter(|fa| fa.frequency >= 20.0 && fa.frequency <= 20000.0)
+        .collect();
 
-    Model {}
+    Model { spectrum: fa_data }
 }
 
 fn event(_app: &App, _model: &mut Model, _event: Event) {}
 
-fn view(app: &App, _model: &Model, frame: Frame) {
-    // Prepare to draw.
+fn frequency_to_color(value: f32) -> Rgb {
+    let normalized = value.clamp(0.0, 1.0);
+
+    Rgb::new(normalized, 0.0, 1.0 - normalized)
+}
+
+fn calculate_x_position(frequency: u32, window_width: f32) -> f32 {
+    let min_freq = 20;
+    let max_freq = 20000;
+
+    let normalized_freq =
+        (frequency as f32 - min_freq as f32) / (max_freq as f32 - min_freq as f32);
+
+    normalized_freq * window_width - (window_width / 2.0)
+}
+
+fn calculate_y_position(fr_val: f32, window_height: f32) -> f32 {
+    let normalized_val = fr_val.clamp(0.0, 1.0);
+    normalized_val * window_height - (window_height / 2.0)
+}
+
+fn view(app: &App, model: &Model, frame: Frame) {
     let draw = app.draw();
+    let window_rect = app.window_rect();
 
-    // Generate sine wave data based on the time of the app
-    let sine = app.time.sin();
-    let slowersine = (app.time / 2.0).sin();
+    for fa in &model.spectrum {
+        println!(
+            "Drawing at frequency: {}, value: {}",
+            fa.frequency, fa.amplitude
+        );
 
-    // Get boundary of the window (to constrain the movements of our circle)
-    let boundary = app.window_rect();
+        let color = frequency_to_color(fa.amplitude);
 
-    // Map the sine wave functions to ranges between the boundaries of the window
-    let x = map_range(sine, -1.0, 1.0, boundary.left(), boundary.right());
-    let y = map_range(slowersine, -1.0, 1.0, boundary.bottom(), boundary.top());
+        let x_position = calculate_x_position(fa.frequency as u32, window_rect.w());
+        let y_position = calculate_y_position(fa.amplitude, window_rect.h());
 
-    // Clear the background to purple.
-    draw.background().color(PLUM);
-
-    // Draw a blue ellipse at the x/y coordinates 0.0, 0.0
-    draw.ellipse().color(STEELBLUE).x_y(x, y);
+        draw.ellipse()
+            .color(color)
+            .x_y(x_position, y_position)
+            .finish();
+    }
 
     draw.to_frame(app, &frame).unwrap();
 }
