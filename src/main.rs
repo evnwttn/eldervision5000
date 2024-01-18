@@ -55,20 +55,12 @@ fn model(_app: &App) -> Model {
 
 fn event(_app: &App, _model: &mut Model, _event: Event) {}
 
-fn frequency_to_color(value: f32) -> Rgb {
-    let normalized = value.clamp(0.0, 1.0);
-
+fn frequency_to_color(normalized: f32) -> Rgb {
     Rgb::new(normalized, 0.0, 1.0 - normalized)
 }
 
-fn calculate_x_position(frequency: u32, window_width: f32) -> f32 {
-    let min_freq = 20;
-    let max_freq = 20000;
-
-    let normalized_freq =
-        (frequency as f32 - min_freq as f32) / (max_freq as f32 - min_freq as f32);
-
-    normalized_freq * window_width - (window_width / 2.0)
+fn calculate_x_position(normalized: f32, window_width: f32) -> f32 {
+    normalized * window_width - (window_width / 2.0)
 }
 
 fn calculate_y_position(fr_val: f32, window_height: f32) -> f32 {
@@ -86,9 +78,13 @@ fn view(app: &App, model: &Model, frame: Frame) {
             fa.frequency, fa.amplitude
         );
 
-        let color = frequency_to_color(fa.amplitude);
+        let min_freq = 20;
+        let max_freq = 20000;
+        let normalized =
+            (fa.frequency as f32 - min_freq as f32) / (max_freq as f32 - min_freq as f32);
 
-        let x_position = calculate_x_position(fa.frequency as u32, window_rect.w());
+        let color = frequency_to_color(normalized);
+        let x_position = calculate_x_position(normalized, window_rect.w());
         let y_position = calculate_y_position(fa.amplitude, window_rect.h());
 
         draw.ellipse()
