@@ -20,6 +20,8 @@ fn model(_app: &App) -> Model {
     let path = Path::new("src/audio/SampleAudio.wav");
     let mut reader = hound::WavReader::open(path).expect("Failed to open file");
     let spec = reader.spec();
+    let min_freq = 20.0;
+    let max_freq = 20000.0;
 
     let samples: Vec<i32> = reader.samples().map(|s| s.unwrap()).collect();
 
@@ -47,25 +49,41 @@ fn model(_app: &App) -> Model {
                 amplitude,
             }
         })
-        .filter(|fa| fa.frequency >= 20.0 && fa.frequency <= 20000.0)
+        .filter(|fa| fa.frequency >= min_freq && fa.frequency <= max_freq)
         .collect();
 
-    Model { spectrum: fa_data }
+    let max_amplitude = fa_data.iter().map(|fa| fa.amplitude).fold(0.0f32, f32::max);
+
+    let normalized_fa_data: Vec<FrequencyAmplitude> = fa_data
+        .into_iter()
+        .map(|fa| {
+            let normalized_frequency = (fa.frequency - min_freq) / (max_freq - min_freq);
+            let normalized_amplitude = fa.amplitude / max_amplitude;
+
+            FrequencyAmplitude {
+                frequency: normalized_frequency,
+                amplitude: normalized_amplitude,
+            }
+        })
+        .collect();
+
+    Model {
+        spectrum: normalized_fa_data,
+    }
 }
 
 fn event(_app: &App, _model: &mut Model, _event: Event) {}
 
-fn frequency_to_color(normalized: f32) -> Rgb {
-    Rgb::new(normalized, 0.0, 1.0 - normalized)
+fn frequency_to_color(frequency: f32) -> Rgb {
+    Rgb::new(frequency, 0.0, 1.0 - frequency)
 }
 
-fn calculate_x_position(normalized: f32, window_width: f32) -> f32 {
-    normalized * window_width - (window_width / 2.0)
+fn calculate_x_position(frequency: f32, window_width: f32) -> f32 {
+    frequency * window_width - (window_width / 2.0)
 }
 
-fn calculate_y_position(fr_val: f32, window_height: f32) -> f32 {
-    let normalized_val = fr_val.clamp(0.0, 1.0);
-    normalized_val * window_height - (window_height / 2.0)
+fn calculate_y_position(amplitude: f32, window_height: f32) -> f32 {
+    amplitude * window_height - (window_height / 2.0)
 }
 
 fn view(app: &App, model: &Model, frame: Frame) {
@@ -78,13 +96,8 @@ fn view(app: &App, model: &Model, frame: Frame) {
             fa.frequency, fa.amplitude
         );
 
-        let min_freq = 20;
-        let max_freq = 20000;
-        let normalized =
-            (fa.frequency as f32 - min_freq as f32) / (max_freq as f32 - min_freq as f32);
-
-        let color = frequency_to_color(normalized);
-        let x_position = calculate_x_position(normalized, window_rect.w());
+        let color = frequency_to_color(fa.frequency);
+        let x_position = calculate_x_position(fa.frequency, window_rect.w());
         let y_position = calculate_y_position(fa.amplitude, window_rect.h());
 
         draw.ellipse()
