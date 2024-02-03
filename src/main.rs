@@ -26,86 +26,52 @@ fn model(_app: &App) -> Model {
     let path = Path::new("src/audio/SampleAudio.wav");
     let mut reader = hound::WavReader::open(path).expect("Failed to open file");
     let spec = reader.spec();
-    let min_freq = 100.0;
-    let max_freq = 10000.0;
+    let min_freq = 400.0;
+    let max_freq = 500.0;
+    let compression_factor = 0.075;
 
-    let samples: Vec<i32> = reader
-        .samples()
-        .map(|s| s.unwrap())
-        .collect();
-
-    let mut buffer: Vec<Complex<f32>> = samples
-        .into_iter()
-        .map(|x| Complex {
-            re: x as f32,
-            im: 0.0,
-        })
+    let samples: Vec<Complex<f32>> = reader
+        .samples::<i32>()
+        .map(|s| Complex::new(s.unwrap() as f32, 0.0))
         .collect();
 
     let mut planner = FftPlanner::new();
-    let fft = planner.plan_fft_forward(buffer.len());
-
+    let fft = planner.plan_fft_forward(samples.len());
+    let mut buffer = samples;
     fft.process(&mut buffer);
+    let buffer_len = buffer.len();
 
-    let fa_data: Vec<FrequencyAmplitudePair> = buffer
-        .iter()
+    let compressed_fa: Vec<FrequencyAmplitudePair> = buffer
+        .into_iter()
         .enumerate()
-        .map(|(i, &complex_val)| {
-            let amplitude = (complex_val.re.powi(2) + complex_val.im.powi(2)).sqrt();
-            let frequency = ((i as f32) * (spec.sample_rate as f32)) / (buffer.len() as f32);
-
-            FrequencyAmplitudePair {
-                frequency,
-                amplitude,
-            }
-        })
-        .filter(|fa| fa.frequency >= min_freq && fa.frequency <= max_freq)
-        .collect();
-
-    let compression_factor = 0.075;
-
-    let compressed_fa_data: Vec<FrequencyAmplitudePair> = fa_data
-        .iter()
-        .map(|fa| FrequencyAmplitudePair {
-            frequency: fa.frequency,
-            amplitude: fa.amplitude.powf(compression_factor),
+        .map(|(i, complex_val)| {
+            let amplitude = complex_val.norm().powf(compression_factor); // Apply compression here
+            let frequency = ((i as f32) * spec.sample_rate as f32) / buffer_len as f32;
+            FrequencyAmplitudePair { frequency, amplitude }
         })
         .collect();
 
-    let max_compressed_amplitude = compressed_fa_data
-        .iter()
-        .map(|fa| fa.amplitude)
-        .fold(0.0f32, f32::max);
+    let max_compressed_amplitude = compressed_fa.iter().map(|fa| fa.amplitude).fold(0.0, f32::max);
 
-    let normalized_fa_data: Vec<FrequencyAmplitudePair> = compressed_fa_data
+    let normalized_fa_data: Vec<FrequencyAmplitudePair> = compressed_fa
         .into_iter()
         .map(|fa| {
-            let normalized_frequency = (fa.frequency - min_freq) / (max_freq - min_freq);
             let normalized_amplitude = fa.amplitude / max_compressed_amplitude;
-
-            FrequencyAmplitudePair {
-                frequency: normalized_frequency,
-                amplitude: normalized_amplitude,
-            }
+            let frequency = (fa.frequency - min_freq) / (max_freq - min_freq);
+            FrequencyAmplitudePair { frequency, amplitude: normalized_amplitude }
         })
+        .filter(|fa| fa.frequency >= 0.0 && fa.frequency <= 1.0)
         .collect();
 
-    let mut frequency_groups = FrequencyGroups {
-        low: Vec::new(),
-        mid: Vec::new(),
-        high: Vec::new(),
-    };
-
-    for fa in normalized_fa_data {
-        match fa.frequency {
-            f if f <= 0.33 => frequency_groups.low.push(fa),
-            f if f > 0.33 && f <= 0.66 => frequency_groups.mid.push(fa),
-            _ => frequency_groups.high.push(fa),
-        }
-    }
+    let (mut low, mut mid, mut high) = (Vec::new(), Vec::new(), Vec::new());
+    normalized_fa_data.into_iter().for_each(|fa| match fa.frequency {
+        f if f <= 0.33 => low.push(fa),
+        f if f <= 0.66 => mid.push(fa),
+        _ => high.push(fa),
+    });
 
     Model {
-        spectrum: frequency_groups,
+        spectrum: FrequencyGroups { low, mid, high },
     }
 }
 
@@ -133,7 +99,12 @@ fn view(app: &App, model: &Model, frame: Frame) {
     let draw = app.draw();
     let window_rect = app.window_rect();
 
-    fn draw_frequency_amplitude_pair(draw: &Draw, fa: &FrequencyAmplitudePair, window_rect: Rect, color: Rgb) {
+    fn draw_frequency_amplitude_pair(
+        draw: &Draw,
+        fa: &FrequencyAmplitudePair,
+        window_rect: Rect,
+        color: Rgb
+    ) {
         println!("Drawing at frequency: {}, amplitude: {}", fa.frequency, fa.amplitude);
         let x = position_by_value(fa.frequency / fa.amplitude, window_rect.w());
         let y = position_by_value(fa.amplitude, window_rect.h());
