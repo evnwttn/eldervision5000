@@ -14,6 +14,12 @@ struct FrequencyGroups {
     high: Vec<FrequencyAmplitudePair>,
 }
 
+enum FrequencyGroup {
+    Low,
+    Mid,
+    High,
+}
+
 struct Model {
     spectrum: FrequencyGroups,
 }
@@ -26,8 +32,8 @@ fn model(_app: &App) -> Model {
     let path = Path::new("src/audio/SampleAudio.wav");
     let mut reader = hound::WavReader::open(path).expect("Failed to open file");
     let spec = reader.spec();
-    let min_freq = 400.0;
-    let max_freq = 500.0;
+    let min_freq = 20.0;
+    let max_freq = 20000.0;
     let compression_factor = 0.075;
 
     let samples: Vec<Complex<f32>> = reader
@@ -44,6 +50,7 @@ fn model(_app: &App) -> Model {
     let compressed_fa: Vec<FrequencyAmplitudePair> = buffer
         .into_iter()
         .enumerate()
+        .filter(|(i, _)| i % 10000 == 0)
         .map(|(i, complex_val)| {
             let amplitude = complex_val.norm().powf(compression_factor); // Apply compression here
             let frequency = ((i as f32) * spec.sample_rate as f32) / buffer_len as f32;
@@ -91,6 +98,19 @@ fn value_to_yellow(value: f32) -> Rgb {
     let yellow_scale = value.clamp(0.0, 1.0);
     Rgb::new(1.0, 1.0, 0.0 * yellow_scale)
 }
+
+fn position_by_sine(value: f32, window_dimension: f32) -> f32 {
+    (value * PI).sin() * window_dimension / 2.0
+}
+
+fn position_by_cosine(value: f32, window_dimension: f32) -> f32 {
+    (value * PI).cos() * window_dimension / 2.0
+}
+
+fn position_by_tan(value: f32, window_dimension: f32) -> f32 {
+    (value * PI).tan() * window_dimension / 2.0
+}
+
 fn position_by_value(value: f32, window_dimension: f32) -> f32 {
     value * window_dimension - window_dimension / 2.0
 }
@@ -103,28 +123,35 @@ fn view(app: &App, model: &Model, frame: Frame) {
         draw: &Draw,
         fa: &FrequencyAmplitudePair,
         window_rect: Rect,
-        color: Rgb
+        color: Rgb,
+        group: FrequencyGroup,
     ) {
         println!("Drawing at frequency: {}, amplitude: {}", fa.frequency, fa.amplitude);
-        let x = position_by_value(fa.frequency / fa.amplitude, window_rect.w());
+        let x = match group {
+            FrequencyGroup::Low => position_by_sine(fa.frequency, window_rect.w()),
+            FrequencyGroup::Mid => position_by_cosine(fa.frequency, window_rect.w()),
+            FrequencyGroup::High => position_by_tan(fa.frequency, window_rect.w()),
+        };
         let y = position_by_value(fa.amplitude, window_rect.h());
         draw.ellipse().color(color).x_y(x, y).finish();
     }
 
     for fa in &model.spectrum.low {
         let color = value_to_blue(fa.frequency);
-        draw_frequency_amplitude_pair(&draw, fa, window_rect, color);
+        draw_frequency_amplitude_pair(&draw, fa, window_rect, color, FrequencyGroup::Low);
     }
 
     for fa in &model.spectrum.mid {
         let color = value_to_orange(fa.frequency);
-        draw_frequency_amplitude_pair(&draw, fa, window_rect, color);
+        draw_frequency_amplitude_pair(&draw, fa, window_rect, color, FrequencyGroup::Mid);
     }
 
     for fa in &model.spectrum.high {
         let color = value_to_yellow(fa.frequency);
-        draw_frequency_amplitude_pair(&draw, fa, window_rect, color);
+        draw_frequency_amplitude_pair(&draw, fa, window_rect, color, FrequencyGroup::High);
     }
+
+    draw.background().color(PLUM);
 
     draw.to_frame(app, &frame).unwrap();
 }
