@@ -35,15 +35,16 @@ struct Model {
 // Where a Rust program begins and ends
 fn main() {
     nannou
-        ::app(model) // Start building app & identify state
+        ::app(model) // Start building nannou app & identify state
         .event(event) // Specify how app handles events
         .simple_window(view) // Request a window to which we will "draw" using view
         .run(); // Run the application
 }
 
+// Where we are manipulating state/data
 fn model(_app: &App) -> Model {
     // Reading .WAV audio file using library hound
-    let path = Path::new("src/audio/SampleAudio.wav");
+    let path = Path::new("src/audio/CMajChord.wav");
     let mut reader = hound::WavReader::open(path).expect("Failed to open file");
 
     // Retrieving file specs, in particular we are looking for Sample Rate for a frequency calculation
@@ -73,7 +74,7 @@ fn model(_app: &App) -> Model {
     let fa_data: Vec<FrequencyAmplitudePair> = buffer
         .into_iter()
         .enumerate()
-        .filter(|(i, _)| i % 100 == 0)
+        .filter(|(i, _)| i % 250 == 0)
         .map(|(i, complex_val)| {
             let amplitude = complex_val.norm();
 
@@ -96,8 +97,8 @@ fn model(_app: &App) -> Model {
         .map(|pair| {
             let normalized_frequency = (pair.frequency - min_freq) / (max_freq - min_freq);
 
-            // Normalize Amplitude and shift up by 1 decimal points, cap at 1.0
-            let scaled_amplitude = (pair.amplitude / max_amplitude) * 10.0;
+            // Normalize + amplify amplitude, cap at 1.0
+            let scaled_amplitude = (pair.amplitude / max_amplitude) * 4.0;
             let capped_amplitude = if scaled_amplitude > 1.0 { 1.0 } else { scaled_amplitude };
 
             FrequencyAmplitudePair {
@@ -137,6 +138,7 @@ fn amplitude_to_color(amplitude: f32, group: FrequencyGroup) -> Rgb {
     }
 }
 
+// Where we take the data we have manipulated and present it
 fn view(app: &App, model: &Model, frame: Frame) {
     let draw = app.draw();
     let boundary = app.window_rect();
